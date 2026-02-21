@@ -11,3 +11,4 @@ out
 !/data/photos/.gitkeep
 /data/signatures/*
 !/data/signatures/.gitkeep
+.vercel
