@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+.DS_Store
+.env.local
+.env
+
+# Runtime data
+/data/submissions.json
+/data/photos/*
+!/data/photos/.gitkeep
+/data/signatures/*
+!/data/signatures/.gitkeep
