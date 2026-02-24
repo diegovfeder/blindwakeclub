@@ -15,7 +15,16 @@ export const ALLOWED_IMAGE_MIME_TYPES = new Set([
 const DEFAULT_UPLOAD_SECRET = "change-me-in-production";
 
 function uploadSecret(): string {
-  return process.env.UPLOAD_SIGNING_SECRET || DEFAULT_UPLOAD_SECRET;
+  const configured = (process.env.UPLOAD_SIGNING_SECRET || "").trim();
+  if (configured) {
+    return configured;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return DEFAULT_UPLOAD_SECRET;
+  }
+
+  throw new Error("UPLOAD_SIGNING_SECRET is required in production.");
 }
 
 export function isAllowedImageMime(mime: string): boolean {
@@ -31,6 +40,13 @@ function normalizedJson(input: UploadTokenPayload): string {
   });
 }
 
+function normalizedSubmissionPdfToken(input: { submissionId: string; expires: number }): string {
+  return JSON.stringify({
+    submissionId: input.submissionId,
+    expires: input.expires,
+  });
+}
+
 export function createUploadSignature(input: UploadTokenPayload): string {
   return crypto
     .createHmac("sha256", uploadSecret())
@@ -40,6 +56,32 @@ export function createUploadSignature(input: UploadTokenPayload): string {
 
 export function verifyUploadSignature(input: UploadTokenPayload, signature: string): boolean {
   const expected = createUploadSignature(input);
+  if (!signature) {
+    return false;
+  }
+
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(signature);
+
+  if (expectedBuffer.length !== actualBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
+export function createSubmissionPdfSignature(input: { submissionId: string; expires: number }): string {
+  return crypto
+    .createHmac("sha256", uploadSecret())
+    .update(normalizedSubmissionPdfToken(input))
+    .digest("base64url");
+}
+
+export function verifySubmissionPdfSignature(
+  input: { submissionId: string; expires: number },
+  signature: string,
+): boolean {
+  const expected = createSubmissionPdfSignature(input);
   if (!signature) {
     return false;
   }

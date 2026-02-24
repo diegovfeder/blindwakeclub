@@ -7,6 +7,7 @@ export interface WaiverPayload {
   emergencyContactName: string;
   emergencyContactPhone: string;
   emergencyContactRelationship: string;
+  consentWaiverText: boolean;
   consentLiability: boolean;
   consentMedical: boolean;
   consentPrivacy: boolean;
@@ -18,9 +19,17 @@ export interface SubmissionRecord {
   id: string;
   createdAt: string;
   payload: Omit<WaiverPayload, "signatureDataUrl">;
+  waiver: {
+    version: string;
+    textHash: string;
+    acceptedAt: string;
+  };
   signature: {
     key: string;
     sha256: string;
+  };
+  documents?: {
+    waiverPdfKey?: string | null;
   };
   tamperHash: string;
 }

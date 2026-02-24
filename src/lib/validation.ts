@@ -43,6 +43,10 @@ export function validateWaiverPayload(payload: Partial<WaiverPayload>): Validati
     errors.consentLiability = "Consentimento de responsabilidade é obrigatório.";
   }
 
+  if (!payload.consentWaiverText) {
+    errors.consentWaiverText = "Você deve confirmar leitura e aceite do termo completo.";
+  }
+
   if (!payload.consentMedical) {
     errors.consentMedical = "Consentimento médico é obrigatório.";
   }

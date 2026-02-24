@@ -6,22 +6,32 @@ Documentation index: `docs/README.md`
 
 ## What is implemented
 
-1. `/` waiver form with required fields, consents, canvas signature, and optional photo upload.
+1. `/` waiver form with:
+   - required participant fields
+   - full legal waiver text panel
+   - required waiver version acceptance checkbox
+   - canvas signature
+   - optional photo upload
 2. Secure upload flow:
    - `POST /api/uploads/presign`
    - `PUT /api/uploads`
 3. Waiver submission API:
    - `POST /api/submissions`
    - saves signature PNG
+   - persists waiver metadata (`version`, `acceptedAt`, `textHash`)
+   - generates participant waiver PDF
    - stores tamper-evidence hash (`tamperHash`)
-4. Admin panel:
+   - returns optional signed participant PDF download URL
+4. Participant PDF download API:
+   - `GET /api/submissions/[id]/pdf` (signed URL or admin-auth access)
+5. Admin panel:
    - `GET /admin`
    - cookie-based admin session (no token in URL)
    - CSV export via `GET /api/admin/submissions.csv`
-5. Admin APIs:
+6. Admin APIs:
    - `GET /api/admin/submissions`
    - `GET /api/admin/submissions.csv`
-6. Basic security controls:
+7. Basic security controls:
    - production HTTPS enforcement middleware
    - upload/payload size limits
    - MIME allowlist checks
@@ -32,7 +42,7 @@ Documentation index: `docs/README.md`
 The app supports two storage backends:
 
 1. `local` (default): writes files under `data/`.
-2. `google`: stores metadata in Google Sheets and files (photos/signatures) in Google Drive.
+2. `supabase`: stores metadata in Postgres table and files in Supabase Storage bucket.
 
 Set with `STORAGE_BACKEND`.
 
@@ -49,24 +59,27 @@ Always required:
 - `ADMIN_TOKEN`
 - `UPLOAD_SIGNING_SECRET`
 - `NEXT_PUBLIC_FORM_URL`
-- `STORAGE_BACKEND` (`local` or `google`)
+- `STORAGE_BACKEND` (`local` or `supabase`)
+- `APP_DEBUG_LOGS` (`1` to enable verbose API logs; recommended for local testing)
 
-Required when `STORAGE_BACKEND=google`:
+Required when `STORAGE_BACKEND=supabase`:
 
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
-- `GOOGLE_SHEETS_SPREADSHEET_ID`
-- `GOOGLE_SHEETS_TAB_NAME` (optional, default `Submissions`)
-- `GOOGLE_DRIVE_FOLDER_ID`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`)
+- `SUPABASE_TABLE` (optional, default `submissions`)
+- `SUPABASE_STORAGE_BUCKET` (optional, default `waiver-files`)
 
-## Google storage setup (Vercel-ready)
+## Recommended MVP setup: Supabase
 
-1. Create a Google Cloud service account and generate a JSON key.
-2. Create a Google Sheet for submissions.
-3. Create a Google Drive folder for uploaded files.
-4. Share both the spreadsheet and the drive folder with the service account email.
-5. Add env vars in Vercel Project Settings.
-6. For `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, paste the key with escaped line breaks (`\n`).
+Use `docs/SUPABASE_SETUP.md` for full setup.
+
+Quick summary:
+
+1. Create Supabase project.
+2. Create private storage bucket (example `waiver-files`).
+3. Create `public.submissions` table (SQL in docs).
+4. Set `STORAGE_BACKEND=supabase` + `SUPABASE_*` env vars.
+5. Run one end-to-end submission and verify table + files.
 
 ## Local run
 
@@ -104,6 +117,7 @@ curl -X POST http://localhost:3000/api/submissions \
     "emergencyContactName":"John Rider",
     "emergencyContactPhone":"+1 555 111 2222",
     "emergencyContactRelationship":"Brother",
+    "consentWaiverText":true,
     "consentLiability":true,
     "consentMedical":true,
     "consentPrivacy":true,

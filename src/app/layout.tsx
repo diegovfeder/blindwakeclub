@@ -6,7 +6,7 @@ import { Manrope, Space_Grotesk } from "next/font/google";
 
 import "@/app/globals.css";
 import InstagramIcon from "@/components/instagram-icon";
-import { BRAND_NAME, SOCIAL_LINKS } from "@/lib/constants";
+import { BRAND_NAME, INSTAGRAM_PROFILE, SOCIAL_LINKS } from "@/lib/constants";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -63,15 +63,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
 
             <div className="header-actions">
-              <a
-                href={SOCIAL_LINKS.instagram}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Instagram da Blind Wake Club"
-                className="icon-link instagram-link"
-              >
-                <InstagramIcon size={22} color="currentColor" className="instagram-icon" />
-              </a>
+              <section className="social-card" aria-label="Instagram da Blind Wake Club">
+                <div className="social-copy">
+                  <p className="kicker">Comunidade</p>
+                  <h2>Siga-nos no Instagram</h2>
+                  <p>
+                    {INSTAGRAM_PROFILE.displayName} · {INSTAGRAM_PROFILE.location}
+                  </p>
+                  <p className="social-handle">{INSTAGRAM_PROFILE.handle}</p>
+                </div>
+
+                <a href={SOCIAL_LINKS.instagram} target="_blank" rel="noreferrer" className="social-cta">
+                  <InstagramIcon size={20} color="currentColor" className="instagram-icon" />
+                  Abrir perfil
+                </a>
+              </section>
             </div>
           </header>
 

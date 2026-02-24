@@ -2,36 +2,65 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
-  appendSubmissionToGoogle,
-  ensureGoogleStorage,
-  googlePhotoExists,
-  isGoogleStorageConfigured,
-  readSubmissionsFromGoogle,
-  savePhotoToGoogle,
-  saveSignatureToGoogle,
-} from "@/lib/google-storage";
+  appendSubmissionToSupabase,
+  ensureSupabaseStorage,
+  isSupabaseStorageConfigured,
+  readSubmissionsFromSupabase,
+  readSupabaseFileById,
+  savePhotoToSupabase,
+  saveSignatureToSupabase,
+  saveWaiverPdfToSupabase,
+  supabasePhotoExists,
+} from "@/lib/supabase-storage";
 import type { SubmissionRecord } from "@/lib/types";
+import { WAIVER_TEXT_HASH, WAIVER_VERSION } from "@/lib/waiver";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const SUBMISSIONS_FILE = path.join(DATA_DIR, "submissions.json");
 const PHOTO_DIR = path.join(DATA_DIR, "photos");
 const SIGNATURE_DIR = path.join(DATA_DIR, "signatures");
+const PDF_DIR = path.join(DATA_DIR, "pdfs");
 
-type StorageBackend = "local" | "google";
+type StorageBackend = "local" | "supabase";
 
 let localInitialized = false;
 
 function readStorageBackend(): StorageBackend {
   const configured = (process.env.STORAGE_BACKEND || "local").trim().toLowerCase();
+  if (configured === "supabase") {
+    return "supabase";
+  }
+
   if (configured === "google") {
-    return "google";
+    throw new Error("STORAGE_BACKEND=google is no longer supported. Use STORAGE_BACKEND=supabase.");
   }
 
   return "local";
 }
 
-function isGoogleBackend(): boolean {
-  return readStorageBackend() === "google";
+function isSupabaseBackend(): boolean {
+  return readStorageBackend() === "supabase";
+}
+
+function normalizeSubmissionRecord(row: SubmissionRecord): SubmissionRecord {
+  const payload = row.payload || ({} as SubmissionRecord["payload"]);
+
+  return {
+    ...row,
+    payload: {
+      ...payload,
+      consentWaiverText: Boolean((payload as Partial<SubmissionRecord["payload"]>).consentWaiverText),
+      photoKey: payload.photoKey || null,
+    },
+    waiver: row.waiver || {
+      version: WAIVER_VERSION,
+      textHash: WAIVER_TEXT_HASH,
+      acceptedAt: row.createdAt,
+    },
+    documents: {
+      waiverPdfKey: row.documents?.waiverPdfKey || null,
+    },
+  };
 }
 
 async function ensureLocalStorage(): Promise<void> {
@@ -41,6 +70,7 @@ async function ensureLocalStorage(): Promise<void> {
 
   await fs.mkdir(PHOTO_DIR, { recursive: true });
   await fs.mkdir(SIGNATURE_DIR, { recursive: true });
+  await fs.mkdir(PDF_DIR, { recursive: true });
 
   try {
     await fs.access(SUBMISSIONS_FILE);
@@ -52,12 +82,12 @@ async function ensureLocalStorage(): Promise<void> {
 }
 
 export async function ensureStorage(): Promise<void> {
-  if (isGoogleBackend()) {
-    if (!isGoogleStorageConfigured()) {
-      throw new Error("STORAGE_BACKEND=google is enabled but Google env vars are missing.");
+  if (isSupabaseBackend()) {
+    if (!isSupabaseStorageConfigured()) {
+      throw new Error("STORAGE_BACKEND=supabase is enabled but Supabase env vars are missing.");
     }
 
-    await ensureGoogleStorage();
+    await ensureSupabaseStorage();
     return;
   }
 
@@ -77,31 +107,42 @@ async function readSubmissionsFromLocal(): Promise<SubmissionRecord[]> {
   await ensureLocalStorage();
   const rows = await readJsonFile<SubmissionRecord[]>(SUBMISSIONS_FILE, []);
 
-  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return rows
+    .map((row) => normalizeSubmissionRecord(row))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function readSubmissions(): Promise<SubmissionRecord[]> {
-  if (isGoogleBackend()) {
-    return readSubmissionsFromGoogle();
+  if (isSupabaseBackend()) {
+    return readSubmissionsFromSupabase();
   }
 
   return readSubmissionsFromLocal();
 }
 
+export async function findSubmissionById(id: string): Promise<SubmissionRecord | null> {
+  const rows = await readSubmissions();
+  return rows.find((row) => row.id === id) || null;
+}
+
 async function writeSubmissions(rows: SubmissionRecord[]): Promise<void> {
   await ensureLocalStorage();
-  await fs.writeFile(SUBMISSIONS_FILE, JSON.stringify(rows, null, 2), "utf8");
+  await fs.writeFile(
+    SUBMISSIONS_FILE,
+    JSON.stringify(rows.map((row) => normalizeSubmissionRecord(row)), null, 2),
+    "utf8",
+  );
 }
 
 async function appendSubmissionToLocal(row: SubmissionRecord): Promise<void> {
   const rows = await readSubmissionsFromLocal();
-  rows.unshift(row);
+  rows.unshift(normalizeSubmissionRecord(row));
   await writeSubmissions(rows);
 }
 
 export async function appendSubmission(row: SubmissionRecord): Promise<void> {
-  if (isGoogleBackend()) {
-    await appendSubmissionToGoogle(row);
+  if (isSupabaseBackend()) {
+    await appendSubmissionToSupabase(normalizeSubmissionRecord(row));
     return;
   }
 
@@ -120,8 +161,8 @@ function safeFilePath(baseDir: string, key: string): string {
 }
 
 export async function saveSignaturePng(submissionId: string, buffer: Buffer): Promise<string> {
-  if (isGoogleBackend()) {
-    return saveSignatureToGoogle(submissionId, buffer);
+  if (isSupabaseBackend()) {
+    return saveSignatureToSupabase(submissionId, buffer);
   }
 
   await ensureLocalStorage();
@@ -131,9 +172,41 @@ export async function saveSignaturePng(submissionId: string, buffer: Buffer): Pr
   return `signatures/${key}`;
 }
 
+export async function saveWaiverPdf(submissionId: string, buffer: Buffer): Promise<string> {
+  if (isSupabaseBackend()) {
+    return saveWaiverPdfToSupabase(submissionId, buffer);
+  }
+
+  await ensureLocalStorage();
+  const key = `${submissionId}.pdf`;
+  const target = safeFilePath(PDF_DIR, key);
+  await fs.writeFile(target, buffer);
+  return `pdfs/${key}`;
+}
+
+export async function readWaiverPdf(key: string): Promise<Buffer | null> {
+  if (!key) {
+    return null;
+  }
+
+  if (isSupabaseBackend()) {
+    return readSupabaseFileById(key);
+  }
+
+  await ensureLocalStorage();
+  const normalizedKey = key.startsWith("pdfs/") ? key.slice("pdfs/".length) : key;
+  const target = safeFilePath(PDF_DIR, normalizedKey);
+
+  try {
+    return await fs.readFile(target);
+  } catch {
+    return null;
+  }
+}
+
 export async function savePhoto(key: string, buffer: Buffer, mimeType: string): Promise<string> {
-  if (isGoogleBackend()) {
-    return savePhotoToGoogle(key, buffer, mimeType);
+  if (isSupabaseBackend()) {
+    return savePhotoToSupabase(key, buffer, mimeType);
   }
 
   await ensureLocalStorage();
@@ -143,8 +216,8 @@ export async function savePhoto(key: string, buffer: Buffer, mimeType: string): 
 }
 
 export async function photoExists(key: string): Promise<boolean> {
-  if (isGoogleBackend()) {
-    return googlePhotoExists(key);
+  if (isSupabaseBackend()) {
+    return supabasePhotoExists(key);
   }
 
   await ensureLocalStorage();

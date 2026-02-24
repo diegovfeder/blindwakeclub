@@ -4,11 +4,11 @@ out
 .DS_Store
 .env.local
 .env
+*.tsbuildinfo
 
 # Runtime data
-/data/submissions.json
-/data/photos/*
-!/data/photos/.gitkeep
-/data/signatures/*
-!/data/signatures/.gitkeep
+/data/
 .vercel
+
+# Google Cloud
+blind-waiver-app-caf2f87d665f.json

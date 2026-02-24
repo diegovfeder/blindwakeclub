@@ -3,40 +3,46 @@
 ## Purpose
 Operational handoff and execution guide for the Blind Wake Club waiver app.
 
-## State Snapshot (as of 2026-02-14)
+## State Snapshot (as of 2026-02-24)
 
 - Git:
-  - Repository is already initialized (`.git` exists).
-  - Active branch: `main`.
-  - Remote configured: `origin https://github.com/diegovfeder/blindwakeclub.git`.
+  - Repository initialized (`.git` exists).
+  - Default branch: `main`.
+  - Remote: `origin https://github.com/diegovfeder/blindwakeclub.git`.
 - Build health:
-  - `npm run build` passes on Next.js `16.0.0`.
+  - `npm run build` passes on Next.js `16.1.6`.
 - Stack:
   - Next.js App Router + TypeScript + React 19.
-  - Node runtime routes for uploads/submissions/admin APIs.
+  - Node runtime for uploads/submissions/admin APIs.
 - Storage:
-  - Local filesystem under `data/` (`submissions.json`, `photos/`, `signatures/`).
+  - `local` filesystem mode for fallback.
+  - `supabase` mode for production metadata/files.
+  - Google backend removed from runtime code.
 
 ## Architecture (Current)
 
 ### UI routes
-- `/` Home page with links to waiver and admin.
-- `/waiver` Participant waiver form.
-- `/waiver/success/[id]` Submission confirmation.
-- `/admin/submissions?token=...` Token-gated admin table + CSV link.
+- `/` waiver form and post-submit success state.
+- `/admin` token-authenticated admin dashboard.
 
 ### API routes
 - `POST /api/uploads/presign`
   - Validates mime/size and returns short-lived signed upload URL.
 - `PUT /api/uploads`
-  - Verifies signature + constraints and writes file to `data/photos/`.
+  - Verifies signature + constraints and writes optional photo file.
 - `POST /api/submissions`
   - Validates waiver payload, decodes signature PNG, verifies optional photo key,
-    computes tamper hash, stores record in `data/submissions.json`.
+    computes tamper hash, stores record, generates waiver PDF with embedded signature image.
+- `GET /api/submissions/[id]/pdf`
+  - Participant signed-link download or admin-auth download.
 - `GET /api/admin/submissions`
-  - Token-auth JSON export.
+  - Admin-auth JSON export.
 - `GET /api/admin/submissions.csv`
-  - Token-auth CSV export.
+  - Admin-auth CSV export.
+- `POST /api/admin/session`
+  - Validates admin token and sets `httpOnly` admin cookie.
+- `POST /api/admin/logout`
+  - Clears admin cookie.
 
 ### Cross-cutting controls
 - Middleware enforces HTTPS for production non-localhost traffic.
@@ -47,74 +53,69 @@ Operational handoff and execution guide for the Blind Wake Club waiver app.
 
 ## Data Flow
 
-1. Client fills `/waiver` form and signs on canvas.
+1. Client fills `/` form and signs on canvas.
 2. Optional photo upload:
    - client asks `/api/uploads/presign` for signed URL,
    - client uploads binary to `/api/uploads`.
-3. Client submits waiver payload + `signatureDataUrl` + optional `photoKey` to `/api/submissions`.
-4. Server writes signature file, appends record, returns `submissionId`.
-5. Client redirects to `/waiver/success/[id]`.
-6. Admin views/exports records via token-gated page/API.
+3. Client submits payload + `signatureDataUrl` + optional `photoKey` to `/api/submissions`.
+4. Server stores signature, stores metadata row, stores generated PDF.
+5. Client sees success state and can download signed PDF URL.
+6. Admin views/searches exports in `/admin`.
 
-## Documentation Reality Check
+## Storage Modes
 
-- Current repo docs present:
-  - `README.md`
-  - `docs/QR_CODE.md`
-  - `assets/README.md`
-- `assets/README.md` is stale relative to this codebase:
-  - references Jotform process and docs that are not in this repo (`docs/jotform-setup.md`, `docs/form-launch-runbook.md`).
-  - should be updated or removed to avoid operator confusion.
+### `local`
+- Metadata: `data/submissions.json`
+- Files:
+  - `data/photos/*`
+  - `data/signatures/*`
+  - `data/pdfs/*`
+
+### `supabase`
+- Metadata: Postgres table (default `public.submissions`)
+- Files: Supabase Storage bucket (default `waiver-files`)
+  - `photos/*`
+  - `signatures/*`
+  - `pdfs/*`
 
 ## Known Gaps / Risks
 
-1. Local file storage is not durable/scalable for multi-instance production.
-2. `UPLOAD_SIGNING_SECRET` has a weak fallback (`change-me-in-production`) if env is missing.
-3. Admin token can be passed via query parameter; this can leak via logs/history.
-4. No role-based auth, no rate limiting, no audit log.
-5. No automated tests (unit/integration/e2e) or CI checks in repo.
-6. No explicit backup/restore script for `data/`.
-7. No malware/content scanning for uploaded images.
+1. No rate limiting on upload/submission/admin endpoints.
+2. No server-side magic-byte validation for uploaded images.
+3. No malware/content scanning for uploaded files.
+4. No full automated test suite or CI enforcement yet.
+5. Admin cookie currently stores raw admin token value.
+6. No structured audit log for admin reads/exports.
+7. No formal retention cleanup worker yet.
 
 ## Next Steps (Priority)
 
 ### P0 (before operational launch)
-1. Set strong secrets in `.env.local` (`ADMIN_TOKEN`, `UPLOAD_SIGNING_SECRET`, `NEXT_PUBLIC_FORM_URL`).
-2. Remove query-param token usage in admin UI and use auth header/session approach.
-3. Decide production storage stack (object storage + DB) and migrate off local filesystem.
-4. Reconcile docs:
-   - align `assets/README.md` with Next.js app flow,
-   - remove Jotform references unless intentionally supporting a Jotform path.
+1. Rotate strong secrets (`ADMIN_TOKEN`, `UPLOAD_SIGNING_SECRET`).
+2. Confirm Supabase table/bucket exists in production env.
+3. Run end-to-end test on deployed Vercel URL (mobile + desktop).
+4. Add basic per-IP rate limiting to upload/submission/admin routes.
 
 ### P1 (hardening)
-1. Add request rate limiting on upload/submission/admin endpoints.
-2. Add server-side file signature checks (magic bytes) for uploaded images.
-3. Add structured logs and minimal audit trail for admin exports.
-4. Add retention cleanup job for old records if policy requires it.
+1. Add magic-byte validation for uploaded images.
+2. Add structured audit events for admin reads/exports.
+3. Replace raw admin cookie with signed session payload.
 
 ### P2 (quality + operations)
-1. Add test coverage:
-   - payload validation,
-   - upload token verification,
-   - submissions write/read,
-   - admin auth handling.
-2. Add CI pipeline for `npm run build` + tests.
-3. Add deployment runbook and incident-recovery notes.
+1. Add integration tests for upload, submission, PDF download, and admin auth.
+2. Add CI (`npm run build` + tests).
+3. Add retention/cleanup job and recovery runbook.
 
 ## Ready-to-Work Checklist
 
-- [ ] Confirm product direction: custom Next.js form vs Jotform-runbook workflow.
-- [ ] Finalize docs to match chosen direction.
-- [ ] Configure production env secrets.
-- [ ] Implement P0 security/storage changes.
-- [ ] Add tests + CI.
-- [ ] Perform end-to-end mobile testing (iOS/Android signature + photo upload + admin visibility).
+- [ ] Confirm `STORAGE_BACKEND=supabase` in target environment.
+- [ ] Confirm `SUPABASE_URL` and server key env vars are set.
+- [ ] Confirm storage bucket and submissions table exist.
+- [ ] Confirm admin login + CSV export works.
+- [ ] Confirm submission with photo + signature succeeds on mobile.
+- [ ] Confirm participant PDF download works post-submit.
 
 ## Git Notes
 
 - Git is already started; no initialization needed.
-- To capture this baseline state:
-  1. `git add AGENTS.md`
-  2. `git add <other intended files>`
-  3. `git commit -m "Add architecture state and execution plan"`
-  4. `git push origin main` (or open PR from a `codex/...` branch)
+- Use a branch for feature work and open PRs where possible.
