@@ -11,7 +11,7 @@ const qrTxtPath = path.join(projectRoot, "public", "qr", "waiver-form-url.txt");
 const qrPngPath = path.join(projectRoot, "public", "qr", "waiver-form-qr.png");
 const qrDocPath = path.join(projectRoot, "docs", "QR_CODE.md");
 const signagePdfPath = path.join(projectRoot, "assets", "termo-de-consentimento-qr.pdf");
-const logoPath = path.join(projectRoot, "public", "branding", "logo-icon.png");
+const logoPath = path.join(projectRoot, "public", "branding", "logo-wordmark.png");
 
 const PAGE_WIDTH = 595;
 const PAGE_HEIGHT = 842;
@@ -111,10 +111,6 @@ function escapePdfString(input) {
   return output;
 }
 
-function textWidthApprox(text, size) {
-  return text.length * size * 0.52;
-}
-
 function pdfTextOp({ font, size, x, y, text }) {
   return [
     "BT",
@@ -125,8 +121,154 @@ function pdfTextOp({ font, size, x, y, text }) {
   ].join("\n");
 }
 
-function centerX(text, size) {
-  return (PAGE_WIDTH - textWidthApprox(text, size)) / 2;
+const HELVETICA_WIDTHS = {
+  " ": 278,
+  "!": 278,
+  '"': 355,
+  "#": 556,
+  "$": 556,
+  "%": 889,
+  "&": 667,
+  "'": 191,
+  "(": 333,
+  ")": 333,
+  "*": 389,
+  "+": 584,
+  ",": 278,
+  "-": 333,
+  ".": 278,
+  "/": 278,
+  ":": 278,
+  ";": 278,
+  "<": 584,
+  "=": 584,
+  ">": 584,
+  "?": 556,
+  "@": 1015,
+  0: 556,
+  1: 556,
+  2: 556,
+  3: 556,
+  4: 556,
+  5: 556,
+  6: 556,
+  7: 556,
+  8: 556,
+  9: 556,
+  A: 667,
+  B: 667,
+  C: 722,
+  D: 722,
+  E: 667,
+  F: 611,
+  G: 778,
+  H: 722,
+  I: 278,
+  J: 500,
+  K: 667,
+  L: 556,
+  M: 833,
+  N: 722,
+  O: 778,
+  P: 667,
+  Q: 778,
+  R: 722,
+  S: 667,
+  T: 611,
+  U: 722,
+  V: 667,
+  W: 944,
+  X: 667,
+  Y: 667,
+  Z: 611,
+  a: 556,
+  b: 556,
+  c: 500,
+  d: 556,
+  e: 556,
+  f: 278,
+  g: 556,
+  h: 556,
+  i: 222,
+  j: 222,
+  k: 500,
+  l: 222,
+  m: 833,
+  n: 556,
+  o: 556,
+  p: 556,
+  q: 556,
+  r: 333,
+  s: 500,
+  t: 278,
+  u: 556,
+  v: 500,
+  w: 722,
+  x: 500,
+  y: 500,
+  z: 500,
+};
+
+const HELVETICA_BOLD_WIDTHS = {
+  ...HELVETICA_WIDTHS,
+  A: 722,
+  B: 722,
+  C: 722,
+  D: 722,
+  E: 667,
+  F: 611,
+  G: 778,
+  H: 722,
+  I: 278,
+  J: 556,
+  K: 722,
+  L: 611,
+  M: 833,
+  N: 722,
+  O: 778,
+  P: 667,
+  Q: 778,
+  R: 722,
+  S: 667,
+  T: 611,
+  U: 722,
+  V: 667,
+  W: 944,
+  X: 667,
+  Y: 667,
+  Z: 611,
+  b: 611,
+  d: 611,
+  f: 333,
+  g: 611,
+  h: 611,
+  k: 556,
+  m: 889,
+  n: 611,
+  o: 611,
+  p: 611,
+  q: 611,
+  r: 389,
+  s: 556,
+  t: 333,
+  u: 611,
+  v: 556,
+  w: 778,
+  x: 556,
+  y: 556,
+};
+
+function measureTextWidth(font, size, text) {
+  const map = font === "F2" ? HELVETICA_BOLD_WIDTHS : HELVETICA_WIDTHS;
+  let units = 0;
+  for (const char of text) {
+    units += map[char] || map[char.normalize("NFD")[0]] || 556;
+  }
+  return (units / 1000) * size;
+}
+
+function centerX(font, size, text) {
+  return (PAGE_WIDTH - measureTextWidth(font, size, text)) / 2;
 }
 
 function wrapLine(text, maxChars) {
@@ -335,6 +477,61 @@ function decodePngToRgb(pngBuffer) {
   };
 }
 
+function cropImageWhitespace(image, threshold = 248) {
+  let minX = image.width;
+  let minY = image.height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const offset = (y * image.width + x) * 3;
+      const r = image.rgbData[offset];
+      const g = image.rgbData[offset + 1];
+      const b = image.rgbData[offset + 2];
+
+      if (r < threshold || g < threshold || b < threshold) {
+        if (x < minX) {
+          minX = x;
+        }
+        if (y < minY) {
+          minY = y;
+        }
+        if (x > maxX) {
+          maxX = x;
+        }
+        if (y > maxY) {
+          maxY = y;
+        }
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return image;
+  }
+
+  const croppedWidth = maxX - minX + 1;
+  const croppedHeight = maxY - minY + 1;
+  const croppedData = Buffer.alloc(croppedWidth * croppedHeight * 3);
+
+  for (let y = 0; y < croppedHeight; y += 1) {
+    for (let x = 0; x < croppedWidth; x += 1) {
+      const sourceOffset = ((minY + y) * image.width + (minX + x)) * 3;
+      const targetOffset = (y * croppedWidth + x) * 3;
+      croppedData[targetOffset] = image.rgbData[sourceOffset];
+      croppedData[targetOffset + 1] = image.rgbData[sourceOffset + 1];
+      croppedData[targetOffset + 2] = image.rgbData[sourceOffset + 2];
+    }
+  }
+
+  return {
+    width: croppedWidth,
+    height: croppedHeight,
+    rgbData: croppedData,
+  };
+}
+
 function buildObject(id, data) {
   return {
     id,
@@ -389,31 +586,33 @@ function buildPdfBinary(objects) {
   return Buffer.concat(buffers);
 }
 
-function buildSignageContent({ formUrl, generatedAt, logoImage, qrImage }) {
+function buildSignageContent({ formUrl, logoImage, qrImage }) {
   const ops = [];
-
-  const qrDrawSize = 315;
-  const qrX = (PAGE_WIDTH - qrDrawSize) / 2;
-  const qrY = 220;
+  const qrOuterSize = 340;
+  const qrSize = 304;
+  const qrOuterX = (PAGE_WIDTH - qrOuterSize) / 2;
+  const qrOuterY = 214;
+  const qrX = (PAGE_WIDTH - qrSize) / 2;
+  const qrY = qrOuterY + (qrOuterSize - qrSize) / 2;
 
   ops.push("q");
-  ops.push("0.95 0.95 0.95 rg");
+  ops.push("1 1 1 rg");
   ops.push(`0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT} re f`);
   ops.push("Q");
 
   ops.push("q");
-  ops.push("1 1 1 rg");
-  ops.push(`32 32 ${PAGE_WIDTH - 64} ${PAGE_HEIGHT - 64} re f`);
+  ops.push("0.04 0.07 0.1 rg");
+  ops.push(`${formatPdfNumber((PAGE_WIDTH - 136) / 2)} 794 136 3 re f`);
   ops.push("Q");
 
   if (logoImage) {
-    const maxWidth = 130;
-    const maxHeight = 130;
+    const maxWidth = 310;
+    const maxHeight = 100;
     const ratio = Math.min(maxWidth / logoImage.width, maxHeight / logoImage.height, 1);
     const logoW = logoImage.width * ratio;
     const logoH = logoImage.height * ratio;
     const logoX = (PAGE_WIDTH - logoW) / 2;
-    const logoY = PAGE_HEIGHT - 180;
+    const logoY = 676;
 
     ops.push("q");
     ops.push(`${formatPdfNumber(logoW)} 0 0 ${formatPdfNumber(logoH)} ${formatPdfNumber(logoX)} ${formatPdfNumber(logoY)} cm`);
@@ -422,47 +621,52 @@ function buildSignageContent({ formUrl, generatedAt, logoImage, qrImage }) {
   }
 
   const title = "TERMO DE CONSENTIMENTO";
-  const subtitle = "Blind Wake Club";
-  const instructionLines = [
-    "Escaneie o QR code para preencher e assinar o termo digital.",
-    "Use a camera do celular ou um app leitor de QR.",
-  ];
+  const introLines = ["Escaneie o QR code para abrir o formulario oficial", "e assinar o termo digital no celular."];
 
-  ops.push(pdfTextOp({ font: "F2", size: 28, x: centerX(title, 28), y: 610, text: title }));
-  ops.push(pdfTextOp({ font: "F2", size: 16, x: centerX(subtitle, 16), y: 585, text: subtitle }));
+  ops.push(pdfTextOp({ font: "F2", size: 34, x: centerX("F2", 34, title), y: 620, text: title }));
 
-  let instructionY = 572;
-  for (const line of instructionLines) {
-    ops.push(pdfTextOp({ font: "F1", size: 12, x: centerX(line, 12), y: instructionY, text: line }));
-    instructionY -= 17;
+  let introY = 586;
+  for (const line of introLines) {
+    ops.push(pdfTextOp({ font: "F1", size: 12, x: centerX("F1", 12, line), y: introY, text: line }));
+    introY -= 17;
   }
 
   ops.push("q");
-  ops.push("0.9 0.9 0.9 rg");
-  ops.push(`${formatPdfNumber(qrX - 14)} ${formatPdfNumber(qrY - 14)} ${formatPdfNumber(qrDrawSize + 28)} ${formatPdfNumber(qrDrawSize + 28)} re f`);
+  ops.push("0.95 0.96 0.97 rg");
+  ops.push(`${formatPdfNumber(qrOuterX)} ${formatPdfNumber(qrOuterY)} ${formatPdfNumber(qrOuterSize)} ${formatPdfNumber(qrOuterSize)} re f`);
   ops.push("Q");
 
   ops.push("q");
-  ops.push(`${formatPdfNumber(qrDrawSize)} 0 0 ${formatPdfNumber(qrDrawSize)} ${formatPdfNumber(qrX)} ${formatPdfNumber(qrY)} cm`);
+  ops.push("1 1 1 rg");
+  ops.push(`${formatPdfNumber(qrX)} ${formatPdfNumber(qrY)} ${formatPdfNumber(qrSize)} ${formatPdfNumber(qrSize)} re f`);
+  ops.push("Q");
+
+  ops.push("q");
+  ops.push("0.78 0.81 0.86 RG");
+  ops.push("0.9 w");
+  ops.push(`${formatPdfNumber(qrOuterX)} ${formatPdfNumber(qrOuterY)} ${formatPdfNumber(qrOuterSize)} ${formatPdfNumber(qrOuterSize)} re S`);
+  ops.push("Q");
+
+  ops.push("q");
+  ops.push(`${formatPdfNumber(qrSize)} 0 0 ${formatPdfNumber(qrSize)} ${formatPdfNumber(qrX)} ${formatPdfNumber(qrY)} cm`);
   ops.push("/QR Do");
   ops.push("Q");
 
-  ops.push(pdfTextOp({ font: "F2", size: 14, x: centerX("Aponte a camera para o QR code", 14), y: 182, text: "Aponte a camera para o QR code" }));
+  const cta = "APONTE A CAMERA PARA O QR CODE";
+  ops.push(pdfTextOp({ font: "F2", size: 16, x: centerX("F2", 16, cta), y: 176, text: cta }));
 
-  const urlLines = wrapLine(formUrl, 56);
-  let urlY = 156;
+  const urlLines = wrapLine(formUrl, 54);
+  let urlY = 146;
   for (const line of urlLines) {
-    ops.push(pdfTextOp({ font: "F1", size: 10.5, x: centerX(line, 10.5), y: urlY, text: line }));
-    urlY -= 13;
+    ops.push(pdfTextOp({ font: "F1", size: 11, x: centerX("F1", 11, line), y: urlY, text: line }));
+    urlY -= 12;
   }
-
-  ops.push(pdfTextOp({ font: "F1", size: 9, x: centerX(`Gerado em ${generatedAt}`, 9), y: 66, text: `Gerado em ${generatedAt}` }));
 
   return Buffer.from(`${ops.join("\n")}\n`, "binary");
 }
 
-function buildSignagePdf({ formUrl, generatedAt, logoImage, qrImage }) {
-  const content = buildSignageContent({ formUrl, generatedAt, logoImage, qrImage });
+function buildSignagePdf({ formUrl, logoImage, qrImage }) {
+  const content = buildSignageContent({ formUrl, logoImage, qrImage });
 
   const objects = [
     buildObject(1, "<< /Type /Catalog /Pages 2 0 R >>"),
@@ -517,20 +721,15 @@ async function main() {
   });
 
   const qrImage = decodePngToRgb(qrPng);
-  const logoImage = await loadLogoImage();
+  const logoImageRaw = await loadLogoImage();
+  const logoImage = logoImageRaw ? cropImageWhitespace(logoImageRaw) : null;
 
   if (!logoImage) {
     throw new Error(`Logo file not found or invalid PNG: ${logoPath}`);
   }
 
-  const generatedAt = new Date().toLocaleString("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-
   const signagePdf = buildSignagePdf({
     formUrl,
-    generatedAt,
     logoImage,
     qrImage,
   });
