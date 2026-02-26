@@ -1,8 +1,8 @@
 import type { ValidationResult, WaiverPayload } from "@/lib/types";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_PATTERN = /^[0-9+()\-\s]{7,20}$/;
-const ID_PATTERN = /^[A-Za-z0-9\-]{4,30}$/;
+const PHONE_PATTERN = /^\(\d{2}\)\s9\d{4}-\d{4}$/;
+const ID_PATTERN = /^[A-Za-z0-9.\-]{4,30}$/;
 
 export function validateWaiverPayload(payload: Partial<WaiverPayload>): ValidationResult {
   const errors: Record<string, string> = {};
@@ -20,15 +20,16 @@ export function validateWaiverPayload(payload: Partial<WaiverPayload>): Validati
   }
 
   if (!payload.phone || !PHONE_PATTERN.test(payload.phone)) {
-    errors.phone = "Telefone válido é obrigatório.";
+    errors.phone = "Telefone válido é obrigatório no formato (41) 98765-4321.";
   }
 
   if (payload.idNumber && !ID_PATTERN.test(payload.idNumber)) {
-    errors.idNumber = "Se informado, use um documento válido.";
+    errors.idNumber = "Se informado, use CPF ou RG válido (ex.: 052.317.202-81).";
   }
 
   if (!payload.emergencyContactPhone || !PHONE_PATTERN.test(payload.emergencyContactPhone)) {
-    errors.emergencyContactPhone = "Telefone do contato de emergência é obrigatório e deve ser válido.";
+    errors.emergencyContactPhone =
+      "Telefone de emergência obrigatório no formato (41) 98765-4321.";
   }
 
   if (!payload.consentLiability) {

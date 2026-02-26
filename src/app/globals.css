@@ -327,6 +327,22 @@ label {
   min-width: 0;
 }
 
+.field-grid label {
+  position: relative;
+  align-content: start;
+  padding-bottom: 3.1rem;
+}
+
+.field-grid label .error {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  min-height: 2.4rem;
+  line-height: 1.24;
+}
+
 input,
 button {
   font: inherit;
@@ -365,6 +381,61 @@ input[type="file"]::file-selector-button {
 
 input::placeholder {
   color: #94a3b8;
+}
+
+.date-input-wrap {
+  position: relative;
+}
+
+.date-text-input {
+  padding-right: 3rem;
+}
+
+.date-picker-button {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.date-picker-button:hover {
+  background: #dbe5f3;
+}
+
+.date-picker-button:focus-visible {
+  outline: 3px solid rgba(15, 23, 42, 0.14);
+  border-color: #94a3b8;
+}
+
+.date-picker-icon {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.date-picker-native-proxy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
 }
 
 input:focus {
@@ -867,5 +938,29 @@ th {
 @media (max-width: 920px) {
   .field-grid {
     grid-template-columns: 1fr;
+    gap: 0.72rem;
+  }
+
+  .field-grid label {
+    padding-bottom: 0;
+  }
+
+  .field-grid label .error {
+    position: static;
+    min-height: 0;
+    margin-top: 0.14rem;
+  }
+}
+
+@media (min-width: 921px) {
+  .field-grid-main,
+  .field-grid-emergency {
+    grid-template-columns: repeat(3, minmax(240px, 360px));
+    justify-content: start;
+  }
+
+  .field-grid-main .field-email-row-two,
+  .field-grid-main .field-document-row-two {
+    grid-column: auto;
   }
 }

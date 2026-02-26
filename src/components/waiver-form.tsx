@@ -1,6 +1,14 @@
 "use client";
 
-import { FormEvent, type PointerEvent as CanvasPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  type PointerEvent as CanvasPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 
 import { WAIVER_LEGAL_TEXT_PT_BR, WAIVER_VERSION } from "@/lib/waiver";
@@ -8,8 +16,11 @@ import { WAIVER_LEGAL_TEXT_PT_BR, WAIVER_VERSION } from "@/lib/waiver";
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_PATTERN = /^[0-9+()\-\s]{7,20}$/;
-const ID_PATTERN = /^[A-Za-z0-9\-]{4,30}$/;
+const PHONE_PATTERN = /^\(\d{2}\)\s9\d{4}-\d{4}$/;
+const ID_PATTERN = /^[A-Za-z0-9.\-]{4,30}$/;
+const PHONE_PLACEHOLDER = "(41) 98765-4321";
+const DATE_PLACEHOLDER = "DD/MM/AAAA";
+const DATE_PATTERN = /^\d{2}\/\d{2}\/\d{4}$/;
 const WAIVER_LINES = WAIVER_LEGAL_TEXT_PT_BR.split("\n");
 
 type StepIndex = 0 | 1 | 2;
@@ -99,9 +110,86 @@ async function readJsonSafe<T>(response: Response): Promise<T | null> {
   }
 }
 
+function maskPhoneInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+
+  if (!digits) {
+    return "";
+  }
+
+  if (digits.length <= 2) {
+    return `(${digits}`;
+  }
+
+  if (digits.length <= 7) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  }
+
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+function maskDateInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function parsePtBrDateToIso(value: string): string | null {
+  if (!DATE_PATTERN.test(value)) {
+    return null;
+  }
+
+  const [dayText, monthText, yearText] = value.split("/");
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+
+  if (
+    !Number.isInteger(day) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(year)
+  ) {
+    return null;
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const isSameDate =
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+
+  if (!isSameDate) {
+    return null;
+  }
+
+  return `${year.toString().padStart(4, "0")}-${monthText}-${dayText}`;
+}
+
+function formatIsoDateToPtBr(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return "";
+  }
+
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
 export function WaiverForm() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const datePickerRef = useRef<HTMLInputElement | null>(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -138,39 +226,59 @@ export function WaiverForm() {
     return `${photoFile.name} (${mb} MB)`;
   }, [photoFile]);
 
-  useEffect(() => {
+  const initializeSignatureCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
     }
 
-    const resize = () => {
-      const context = canvas.getContext("2d");
-      if (!context) {
-        return;
-      }
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
 
-      const ratio = Math.max(window.devicePixelRatio || 1, 1);
-      const bounds = canvas.getBoundingClientRect();
-      canvas.width = Math.floor(bounds.width * ratio);
-      canvas.height = Math.floor(bounds.height * ratio);
-      context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      context.lineWidth = 2.5;
-      context.lineCap = "round";
-      context.lineJoin = "round";
-      context.strokeStyle = "#111";
-      context.fillStyle = "#fff";
-      context.fillRect(0, 0, bounds.width, bounds.height);
-      setHasSignature(false);
+    const bounds = canvas.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return;
+    }
+
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+    canvas.width = Math.round(bounds.width * ratio);
+    canvas.height = Math.round(bounds.height * ratio);
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.lineWidth = 2.5 * ratio;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = "#111";
+
+    drawingRef.current = false;
+    lastPointRef.current = null;
+    setHasSignature(false);
+  }, []);
+
+  useEffect(() => {
+    if (step !== 2) {
+      return;
+    }
+
+    const handleResize = () => {
+      initializeSignatureCanvas();
     };
 
-    resize();
-    window.addEventListener("resize", resize);
+    const frame = window.requestAnimationFrame(() => {
+      initializeSignatureCanvas();
+    });
+
+    window.addEventListener("resize", handleResize);
 
     return () => {
-      window.removeEventListener("resize", resize);
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
     };
-  }, []);
+  }, [step, initializeSignatureCanvas]);
 
   useEffect(() => {
     if (!photoFile) {
@@ -210,9 +318,12 @@ export function WaiverForm() {
     }
 
     const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
     return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
     };
   };
 
@@ -223,6 +334,7 @@ export function WaiverForm() {
     }
 
     canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
     drawingRef.current = true;
     const point = getCanvasPoint(event);
     lastPointRef.current = point;
@@ -233,7 +345,13 @@ export function WaiverForm() {
     }
 
     context.beginPath();
-    context.arc(point.x, point.y, 1, 0, Math.PI * 2);
+    context.arc(
+      point.x,
+      point.y,
+      Math.max(1, context.lineWidth / 2),
+      0,
+      Math.PI * 2,
+    );
     context.fillStyle = "#111";
     context.fill();
     setHasSignature(true);
@@ -243,6 +361,7 @@ export function WaiverForm() {
     if (!drawingRef.current) {
       return;
     }
+    event.preventDefault();
 
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -285,21 +404,24 @@ export function WaiverForm() {
       return;
     }
 
-    const bounds = canvas.getBoundingClientRect();
     context.fillStyle = "#fff";
-    context.fillRect(0, 0, bounds.width, bounds.height);
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    drawingRef.current = false;
+    lastPointRef.current = null;
     setHasSignature(false);
   };
 
   const validateClientSide = (): Record<string, string> => {
     const nextErrors: Record<string, string> = {};
+    const normalizedDateOfBirth = parsePtBrDateToIso(form.dateOfBirth);
 
     if (!form.fullName.trim()) {
       nextErrors.fullName = "Nome completo é obrigatório.";
     }
 
-    if (!form.dateOfBirth) {
-      nextErrors.dateOfBirth = "Data de nascimento é obrigatória.";
+    if (!normalizedDateOfBirth) {
+      nextErrors.dateOfBirth =
+        "Data de nascimento obrigatória no formato DD/MM/AAAA.";
     }
 
     if (!form.phone.trim() || !PHONE_PATTERN.test(form.phone)) {
@@ -314,12 +436,17 @@ export function WaiverForm() {
       nextErrors.idNumber = "Se informado, use um documento válido.";
     }
 
-    if (!form.emergencyContactPhone.trim() || !PHONE_PATTERN.test(form.emergencyContactPhone)) {
-      nextErrors.emergencyContactPhone = "Telefone do contato de emergência é obrigatório e deve ser válido.";
+    if (
+      !form.emergencyContactPhone.trim() ||
+      !PHONE_PATTERN.test(form.emergencyContactPhone)
+    ) {
+      nextErrors.emergencyContactPhone =
+        "Telefone do contato de emergência é obrigatório e deve ser válido.";
     }
 
     if (!form.consentWaiverText) {
-      nextErrors.consentWaiverText = "Você deve aceitar os termos obrigatórios para continuar.";
+      nextErrors.consentWaiverText =
+        "Você deve aceitar os termos obrigatórios para continuar.";
     }
 
     if (!hasSignature) {
@@ -339,13 +466,20 @@ export function WaiverForm() {
     return nextErrors;
   };
 
-  const getStepErrors = (source: Record<string, string>, stepIndex: StepIndex) => {
+  const getStepErrors = (
+    source: Record<string, string>,
+    stepIndex: StepIndex,
+  ) => {
     return Object.fromEntries(
-      Object.entries(source).filter(([field]) => FIELD_TO_STEP[field] === stepIndex),
+      Object.entries(source).filter(
+        ([field]) => FIELD_TO_STEP[field] === stepIndex,
+      ),
     );
   };
 
-  const findFirstStepForErrors = (source: Record<string, string>): StepIndex => {
+  const findFirstStepForErrors = (
+    source: Record<string, string>,
+  ): StepIndex => {
     const steps = Object.keys(source)
       .map((field) => FIELD_TO_STEP[field])
       .filter((value): value is StepIndex => value !== undefined);
@@ -366,14 +500,36 @@ export function WaiverForm() {
       return;
     }
 
-    setStep((current) => (Math.min(current + 1, 2) as StepIndex));
+    setStep((current) => Math.min(current + 1, 2) as StepIndex);
     setServerError("");
   };
 
   const goToPreviousStep = () => {
     setErrors({});
     setServerError("");
-    setStep((current) => (Math.max(current - 1, 0) as StepIndex));
+    setStep((current) => Math.max(current - 1, 0) as StepIndex);
+  };
+
+  const openDatePicker = () => {
+    const input = datePickerRef.current;
+    if (!input) {
+      return;
+    }
+
+    const normalizedDateOfBirth = parsePtBrDateToIso(form.dateOfBirth);
+    input.value = normalizedDateOfBirth || "";
+
+    const pickerInput = input as HTMLInputElement & {
+      showPicker?: () => void;
+    };
+
+    if (pickerInput.showPicker) {
+      pickerInput.showPicker();
+      return;
+    }
+
+    input.focus();
+    input.click();
   };
 
   const uploadPhotoIfPresent = async (): Promise<string | null> => {
@@ -393,9 +549,17 @@ export function WaiverForm() {
       }),
     });
 
-    const presignPayload = await readJsonSafe<PresignResponse & { error?: string }>(presignResponse);
-    if (!presignResponse.ok || !presignPayload?.uploadUrl || !presignPayload.key) {
-      throw new Error(presignPayload?.error || "Não foi possível iniciar o upload da foto.");
+    const presignPayload = await readJsonSafe<
+      PresignResponse & { error?: string }
+    >(presignResponse);
+    if (
+      !presignResponse.ok ||
+      !presignPayload?.uploadUrl ||
+      !presignPayload.key
+    ) {
+      throw new Error(
+        presignPayload?.error || "Não foi possível iniciar o upload da foto.",
+      );
     }
 
     const uploadResponse = await fetch(presignPayload.uploadUrl, {
@@ -406,9 +570,13 @@ export function WaiverForm() {
       body: photoFile,
     });
 
-    const uploadPayload = await readJsonSafe<{ key?: string; error?: string }>(uploadResponse);
+    const uploadPayload = await readJsonSafe<{ key?: string; error?: string }>(
+      uploadResponse,
+    );
     if (!uploadResponse.ok || !uploadPayload?.key) {
-      throw new Error(uploadPayload?.error || "Não foi possível enviar a foto.");
+      throw new Error(
+        uploadPayload?.error || "Não foi possível enviar a foto.",
+      );
     }
 
     return uploadPayload.key;
@@ -438,9 +606,20 @@ export function WaiverForm() {
       const photoKey = await uploadPhotoIfPresent();
       setSubmitPhase("saving_submission");
       const signatureDataUrl = canvas.toDataURL("image/png");
+      const normalizedDateOfBirth = parsePtBrDateToIso(form.dateOfBirth);
+
+      if (!normalizedDateOfBirth) {
+        setErrors((current) => ({
+          ...current,
+          dateOfBirth: "Data de nascimento obrigatória no formato DD/MM/AAAA.",
+        }));
+        setStep(0);
+        throw new Error("Data de nascimento inválida.");
+      }
 
       const payload = {
         ...form,
+        dateOfBirth: normalizedDateOfBirth,
         signatureDataUrl,
         photoKey,
       };
@@ -467,7 +646,9 @@ export function WaiverForm() {
           setStep(findFirstStepForErrors(apiErrors));
         }
 
-        throw new Error(submitPayload?.error || "Não foi possível enviar o termo.");
+        throw new Error(
+          submitPayload?.error || "Não foi possível enviar o termo.",
+        );
       }
 
       const nextParams = new URLSearchParams({
@@ -485,7 +666,11 @@ export function WaiverForm() {
       setSubmitPhase("idle");
       router.push(`/?${nextParams.toString()}`);
     } catch (error) {
-      setServerError(error instanceof Error ? error.message : "Erro inesperado ao enviar o formulário.");
+      setServerError(
+        error instanceof Error
+          ? error.message
+          : "Erro inesperado ao enviar o formulário.",
+      );
       setSubmitPhase("idle");
     }
   };
@@ -493,14 +678,26 @@ export function WaiverForm() {
   return (
     <form className="waiver-form" onSubmit={submitForm} noValidate>
       <fieldset className="waiver-form-content" disabled={isSubmitting}>
-        <div className="waiver-stepper" role="list" aria-label="Etapas do formulário">
+        <div
+          className="waiver-stepper"
+          role="list"
+          aria-label="Etapas do formulário"
+        >
           {STEP_META.map((meta, index) => {
             const stepIndex = index as StepIndex;
             const stateClass =
-              stepIndex === step ? "is-active" : stepIndex < step ? "is-complete" : "is-pending";
+              stepIndex === step
+                ? "is-active"
+                : stepIndex < step
+                  ? "is-complete"
+                  : "is-pending";
 
             return (
-              <article key={meta.title} className={`waiver-step-card ${stateClass}`} role="listitem">
+              <article
+                key={meta.title}
+                className={`waiver-step-card ${stateClass}`}
+                role="listitem"
+              >
                 <span className="waiver-step-badge">{index + 1}</span>
                 <div>
                   <h3>{meta.title}</h3>
@@ -514,9 +711,11 @@ export function WaiverForm() {
         {step === 0 ? (
           <section className="step-panel">
             <h2>Dados principais</h2>
-            <p className="hint">Vamos começar rápido. Só o essencial é obrigatório.</p>
+            <p className="hint">
+              Vamos começar rápido. Só o essencial é obrigatório.
+            </p>
 
-            <div className="field-grid">
+            <div className="field-grid field-grid-main">
               <label>
                 Nome completo *
                 <input
@@ -524,20 +723,63 @@ export function WaiverForm() {
                   value={form.fullName}
                   onChange={(event) => setField("fullName", event.target.value)}
                   autoComplete="name"
+                  placeholder="Ex.: Pedro Wake"
                   required
                 />
-                {errors.fullName && <span className="error">{errors.fullName}</span>}
+                {errors.fullName && (
+                  <span className="error">{errors.fullName}</span>
+                )}
               </label>
 
               <label>
                 Data de nascimento *
-                <input
-                  type="date"
-                  value={form.dateOfBirth}
-                  onChange={(event) => setField("dateOfBirth", event.target.value)}
-                  required
-                />
-                {errors.dateOfBirth && <span className="error">{errors.dateOfBirth}</span>}
+                <div className="date-input-wrap">
+                  <input
+                    type="text"
+                    className="date-text-input"
+                    value={form.dateOfBirth}
+                    onChange={(event) =>
+                      setField("dateOfBirth", maskDateInput(event.target.value))
+                    }
+                    placeholder={DATE_PLACEHOLDER}
+                    inputMode="numeric"
+                    autoComplete="bday"
+                    maxLength={10}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="date-picker-button"
+                    onClick={openDatePicker}
+                    aria-label="Abrir calendário"
+                    title="Abrir calendário"
+                  >
+                    <svg
+                      className="date-picker-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <rect x="3.5" y="5.5" width="17" height="15" rx="2.5" />
+                      <line x1="3.5" y1="9" x2="20.5" y2="9" />
+                      <line x1="8" y1="3.5" x2="8" y2="7" />
+                      <line x1="16" y1="3.5" x2="16" y2="7" />
+                    </svg>
+                  </button>
+                  <input
+                    ref={datePickerRef}
+                    type="date"
+                    className="date-picker-native-proxy"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    value={parsePtBrDateToIso(form.dateOfBirth) || ""}
+                    onChange={(event) =>
+                      setField("dateOfBirth", formatIsoDateToPtBr(event.target.value))
+                    }
+                  />
+                </div>
+                {errors.dateOfBirth && (
+                  <span className="error">{errors.dateOfBirth}</span>
+                )}
               </label>
 
               <label>
@@ -545,32 +787,40 @@ export function WaiverForm() {
                 <input
                   type="tel"
                   value={form.phone}
-                  onChange={(event) => setField("phone", event.target.value)}
-                  autoComplete="tel"
+                  onChange={(event) =>
+                    setField("phone", maskPhoneInput(event.target.value))
+                  }
+                  autoComplete="tel-national"
+                  inputMode="numeric"
+                  placeholder={PHONE_PLACEHOLDER}
                   required
                 />
                 {errors.phone && <span className="error">{errors.phone}</span>}
               </label>
 
-              <label>
+              <label className="field-email-row-two">
                 E-mail (opcional)
                 <input
                   type="email"
                   value={form.email}
                   onChange={(event) => setField("email", event.target.value)}
                   autoComplete="email"
+                  placeholder="Ex.: wake@board.com"
                 />
                 {errors.email && <span className="error">{errors.email}</span>}
               </label>
 
-              <label>
+              <label className="field-document-row-two">
                 Documento (opcional)
                 <input
                   type="text"
                   value={form.idNumber}
                   onChange={(event) => setField("idNumber", event.target.value)}
+                  placeholder="Ex.: CPF ou RG"
                 />
-                {errors.idNumber && <span className="error">{errors.idNumber}</span>}
+                {errors.idNumber && (
+                  <span className="error">{errors.idNumber}</span>
+                )}
               </label>
             </div>
           </section>
@@ -580,19 +830,30 @@ export function WaiverForm() {
           <section className="step-panel">
             <h2>Contato de emergência</h2>
             <p className="hint">
-              Para segurança operacional, só o telefone de emergência é obrigatório.
+              Para segurança operacional, só o telefone de emergência é
+              obrigatório.
             </p>
 
-            <div className="field-grid">
+            <div className="field-grid field-grid-emergency">
               <label>
-                Telefone do contato de emergência *
+                Telefone de emergência *
                 <input
                   type="tel"
                   value={form.emergencyContactPhone}
-                  onChange={(event) => setField("emergencyContactPhone", event.target.value)}
+                  onChange={(event) =>
+                    setField(
+                      "emergencyContactPhone",
+                      maskPhoneInput(event.target.value),
+                    )
+                  }
+                  autoComplete="tel-national"
+                  inputMode="numeric"
+                  placeholder={PHONE_PLACEHOLDER}
                   required
                 />
-                {errors.emergencyContactPhone && <span className="error">{errors.emergencyContactPhone}</span>}
+                {errors.emergencyContactPhone && (
+                  <span className="error">{errors.emergencyContactPhone}</span>
+                )}
               </label>
 
               <label>
@@ -600,9 +861,14 @@ export function WaiverForm() {
                 <input
                   type="text"
                   value={form.emergencyContactName}
-                  onChange={(event) => setField("emergencyContactName", event.target.value)}
+                  onChange={(event) =>
+                    setField("emergencyContactName", event.target.value)
+                  }
+                  placeholder="Ex.: Isa Wake"
                 />
-                {errors.emergencyContactName && <span className="error">{errors.emergencyContactName}</span>}
+                {errors.emergencyContactName && (
+                  <span className="error">{errors.emergencyContactName}</span>
+                )}
               </label>
 
               <label>
@@ -610,10 +876,15 @@ export function WaiverForm() {
                 <input
                   type="text"
                   value={form.emergencyContactRelationship}
-                  onChange={(event) => setField("emergencyContactRelationship", event.target.value)}
+                  onChange={(event) =>
+                    setField("emergencyContactRelationship", event.target.value)
+                  }
+                  placeholder="Ex.: mãe, pai, bro, ..."
                 />
                 {errors.emergencyContactRelationship && (
-                  <span className="error">{errors.emergencyContactRelationship}</span>
+                  <span className="error">
+                    {errors.emergencyContactRelationship}
+                  </span>
                 )}
               </label>
             </div>
@@ -624,7 +895,9 @@ export function WaiverForm() {
           <>
             <section className="waiver-legal-block step-panel">
               <h2>Aceite legal</h2>
-              <p className="hint">Um único aceite confirma os termos obrigatórios do waiver.</p>
+              <p className="hint">
+                Um único aceite confirma os termos obrigatórios do waiver.
+              </p>
 
               <details className="waiver-details">
                 <summary>Ver termo completo (versão {WAIVER_VERSION})</summary>
@@ -643,14 +916,19 @@ export function WaiverForm() {
                   checked={form.consentWaiverText}
                   onChange={(event) => setUnifiedConsent(event.target.checked)}
                 />
-                Li e aceito os termos de responsabilidade, consentimento médico e privacidade. *
+                Li e aceito os termos de responsabilidade, consentimento médico
+                e privacidade. *
               </label>
-              {errors.consentWaiverText && <span className="error">{errors.consentWaiverText}</span>}
+              {errors.consentWaiverText && (
+                <span className="error">{errors.consentWaiverText}</span>
+              )}
             </section>
 
             <section className="signature-block step-panel">
               <h2>Assinatura *</h2>
-              <p className="hint">Assine dentro da caixa usando mouse, dedo ou caneta.</p>
+              <p className="hint">
+                Assine dentro da caixa usando mouse, dedo ou caneta.
+              </p>
               <canvas
                 ref={canvasRef}
                 className="signature-canvas"
@@ -661,24 +939,38 @@ export function WaiverForm() {
                 onPointerCancel={endDraw}
               />
               <div className="actions">
-                <button type="button" className="button button-secondary" onClick={clearSignature}>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={clearSignature}
+                >
                   Limpar assinatura
                 </button>
               </div>
-              {errors.signatureDataUrl && <span className="error">{errors.signatureDataUrl}</span>}
+              {errors.signatureDataUrl && (
+                <span className="error">{errors.signatureDataUrl}</span>
+              )}
             </section>
 
             <section className="photo-block step-panel">
               <h2>Foto opcional</h2>
-              <p className="hint">Formatos aceitos: JPEG, PNG, WEBP. Tamanho máximo: 5 MB.</p>
+              <p className="hint">
+                Formatos aceitos: JPEG, PNG, WEBP. Tamanho máximo: 5 MB.
+              </p>
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
-                onChange={(event) => setPhotoFile(event.target.files?.[0] || null)}
+                onChange={(event) =>
+                  setPhotoFile(event.target.files?.[0] || null)
+                }
               />
               <p className="hint">{photoSummary}</p>
               {photoPreviewUrl ? (
-                <img src={photoPreviewUrl} alt="Pré-visualização da foto" className="photo-preview" />
+                <img
+                  src={photoPreviewUrl}
+                  alt="Pré-visualização da foto"
+                  className="photo-preview"
+                />
               ) : null}
               {errors.photo && <span className="error">{errors.photo}</span>}
             </section>
@@ -686,8 +978,9 @@ export function WaiverForm() {
             <section className="notice-block step-panel">
               <h2>Aviso de privacidade</h2>
               <p>
-                Blind Wake Club armazena os dados do termo para operação de segurança, conformidade legal
-                e resposta a incidentes, com acesso restrito à equipe autorizada.
+                Blind Wake Club armazena os dados do termo para operação de
+                segurança, conformidade legal e resposta a incidentes, com
+                acesso restrito à equipe autorizada.
               </p>
             </section>
           </>
@@ -695,7 +988,11 @@ export function WaiverForm() {
 
         <div className="step-actions">
           {step > 0 ? (
-            <button type="button" className="button button-secondary" onClick={goToPreviousStep}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={goToPreviousStep}
+            >
               Voltar
             </button>
           ) : null}
