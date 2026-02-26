@@ -38,20 +38,31 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="pt-BR" className={`${headingFont.variable} ${bodyFont.variable}`}>
+    <html
+      lang="pt-BR"
+      className={`${headingFont.variable} ${bodyFont.variable}`}
+    >
       <body>
         <div className="site-shell">
           <header className="site-header">
-        {process.env.NODE_ENV === "development" && (
-          <Script
-            src="//unpkg.com/react-grab/dist/index.global.js"
-            crossOrigin="anonymous"
-            strategy="beforeInteractive"
-          />
-        )}
-            <Link href="/" className="site-brand" aria-label="Início Blind Wake Club">
+            {process.env.NODE_ENV === "development" && (
+              <Script
+                src="//unpkg.com/react-grab/dist/index.global.js"
+                crossOrigin="anonymous"
+                strategy="beforeInteractive"
+              />
+            )}
+            <Link
+              href="/"
+              className="site-brand"
+              aria-label="Início Blind Wake Club"
+            >
               <Image
                 src="/branding/logo-wordmark.png"
                 alt={BRAND_NAME}
@@ -63,18 +74,31 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
 
             <div className="header-actions">
-              <section className="social-card" aria-label="Instagram da Blind Wake Club">
+              <section
+                className="social-card"
+                aria-label="Instagram do BL!ND WAKE CLUB"
+              >
                 <div className="social-copy">
                   <p className="kicker">Comunidade</p>
                   <h2>Siga-nos no Instagram</h2>
                   <p>
-                    {INSTAGRAM_PROFILE.displayName} · {INSTAGRAM_PROFILE.location}
+                    {INSTAGRAM_PROFILE.displayName} ·{" "}
+                    {INSTAGRAM_PROFILE.location}
                   </p>
                   <p className="social-handle">{INSTAGRAM_PROFILE.handle}</p>
                 </div>
 
-                <a href={SOCIAL_LINKS.instagram} target="_blank" rel="noreferrer" className="social-cta">
-                  <InstagramIcon size={20} color="currentColor" className="instagram-icon" />
+                <a
+                  href={SOCIAL_LINKS.instagram}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="social-cta"
+                >
+                  <InstagramIcon
+                    size={20}
+                    color="currentColor"
+                    className="instagram-icon"
+                  />
                   Abrir perfil
                 </a>
               </section>

@@ -7,7 +7,12 @@ import { WAIVER_LEGAL_TEXT_PT_BR, WAIVER_VERSION } from "@/lib/waiver";
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_PATTERN = /^[0-9+()\-\s]{7,20}$/;
+const ID_PATTERN = /^[A-Za-z0-9\-]{4,30}$/;
 const WAIVER_LINES = WAIVER_LEGAL_TEXT_PT_BR.split("\n");
+
+type StepIndex = 0 | 1 | 2;
 
 type FormState = {
   fullName: string;
@@ -54,6 +59,38 @@ const INITIAL_STATE: FormState = {
   consentPrivacy: false,
 };
 
+const STEP_META = [
+  {
+    title: "Seus dados",
+    hint: "Somente dados essenciais para o termo.",
+  },
+  {
+    title: "Emergência",
+    hint: "Telefone obrigatório. Os demais campos são opcionais.",
+  },
+  {
+    title: "Termo e assinatura",
+    hint: "Aceite único + assinatura digital.",
+  },
+] as const;
+
+const FIELD_TO_STEP: Record<string, StepIndex> = {
+  fullName: 0,
+  dateOfBirth: 0,
+  email: 0,
+  phone: 0,
+  idNumber: 0,
+  emergencyContactName: 1,
+  emergencyContactPhone: 1,
+  emergencyContactRelationship: 1,
+  consentWaiverText: 2,
+  consentLiability: 2,
+  consentMedical: 2,
+  consentPrivacy: 2,
+  signatureDataUrl: 2,
+  photo: 2,
+};
+
 async function readJsonSafe<T>(response: Response): Promise<T | null> {
   try {
     return (await response.json()) as T;
@@ -65,18 +102,17 @@ async function readJsonSafe<T>(response: Response): Promise<T | null> {
 export function WaiverForm() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const waiverScrollRef = useRef<HTMLDivElement | null>(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
+  const [step, setStep] = useState<StepIndex>(0);
   const [form, setForm] = useState<FormState>(INITIAL_STATE);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState("");
   const [hasSignature, setHasSignature] = useState(false);
-  const [canConfirmWaiver, setCanConfirmWaiver] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
   const [serverError, setServerError] = useState("");
+  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>("idle");
 
   const isSubmitting = submitPhase !== "idle";
   const submitButtonLabel =
@@ -85,6 +121,7 @@ export function WaiverForm() {
       : submitPhase === "saving_submission"
         ? "Enviando termo..."
         : "Enviar termo";
+
   const submitStatusMessage =
     submitPhase === "uploading_photo"
       ? "Enviando foto para o storage..."
@@ -100,23 +137,6 @@ export function WaiverForm() {
     const mb = (photoFile.size / (1024 * 1024)).toFixed(2);
     return `${photoFile.name} (${mb} MB)`;
   }, [photoFile]);
-
-  const updateWaiverReadState = () => {
-    const element = waiverScrollRef.current;
-    if (!element) {
-      return;
-    }
-
-    if (element.scrollHeight <= element.clientHeight + 8) {
-      setCanConfirmWaiver(true);
-      return;
-    }
-
-    const readEnough = element.scrollTop + element.clientHeight >= element.scrollHeight - 24;
-    if (readEnough) {
-      setCanConfirmWaiver(true);
-    }
-  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -153,14 +173,6 @@ export function WaiverForm() {
   }, []);
 
   useEffect(() => {
-    updateWaiverReadState();
-    window.addEventListener("resize", updateWaiverReadState);
-    return () => {
-      window.removeEventListener("resize", updateWaiverReadState);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!photoFile) {
       setPhotoPreviewUrl("");
       return;
@@ -178,6 +190,16 @@ export function WaiverForm() {
     setForm((current) => ({
       ...current,
       [field]: value,
+    }));
+  };
+
+  const setUnifiedConsent = (checked: boolean) => {
+    setForm((current) => ({
+      ...current,
+      consentWaiverText: checked,
+      consentLiability: checked,
+      consentMedical: checked,
+      consentPrivacy: checked,
     }));
   };
 
@@ -280,44 +302,24 @@ export function WaiverForm() {
       nextErrors.dateOfBirth = "Data de nascimento é obrigatória.";
     }
 
-    if (!form.email.includes("@")) {
-      nextErrors.email = "E-mail válido é obrigatório.";
+    if (!form.phone.trim() || !PHONE_PATTERN.test(form.phone)) {
+      nextErrors.phone = "Telefone válido é obrigatório.";
     }
 
-    if (!form.phone.trim()) {
-      nextErrors.phone = "Telefone é obrigatório.";
+    if (form.email.trim() && !EMAIL_PATTERN.test(form.email.trim())) {
+      nextErrors.email = "Se informado, use um e-mail válido.";
     }
 
-    if (!form.idNumber.trim()) {
-      nextErrors.idNumber = "Número do documento é obrigatório.";
+    if (form.idNumber.trim() && !ID_PATTERN.test(form.idNumber.trim())) {
+      nextErrors.idNumber = "Se informado, use um documento válido.";
     }
 
-    if (!form.emergencyContactName.trim()) {
-      nextErrors.emergencyContactName = "Nome do contato de emergência é obrigatório.";
-    }
-
-    if (!form.emergencyContactPhone.trim()) {
-      nextErrors.emergencyContactPhone = "Telefone do contato de emergência é obrigatório.";
-    }
-
-    if (!form.emergencyContactRelationship.trim()) {
-      nextErrors.emergencyContactRelationship = "Parentesco é obrigatório.";
-    }
-
-    if (!form.consentLiability) {
-      nextErrors.consentLiability = "Você deve aceitar o termo de responsabilidade.";
+    if (!form.emergencyContactPhone.trim() || !PHONE_PATTERN.test(form.emergencyContactPhone)) {
+      nextErrors.emergencyContactPhone = "Telefone do contato de emergência é obrigatório e deve ser válido.";
     }
 
     if (!form.consentWaiverText) {
-      nextErrors.consentWaiverText = "Você deve confirmar leitura e aceite do termo completo.";
-    }
-
-    if (!form.consentMedical) {
-      nextErrors.consentMedical = "Você deve aceitar o consentimento médico.";
-    }
-
-    if (!form.consentPrivacy) {
-      nextErrors.consentPrivacy = "Você deve aceitar a política de privacidade e retenção.";
+      nextErrors.consentWaiverText = "Você deve aceitar os termos obrigatórios para continuar.";
     }
 
     if (!hasSignature) {
@@ -335,6 +337,43 @@ export function WaiverForm() {
     }
 
     return nextErrors;
+  };
+
+  const getStepErrors = (source: Record<string, string>, stepIndex: StepIndex) => {
+    return Object.fromEntries(
+      Object.entries(source).filter(([field]) => FIELD_TO_STEP[field] === stepIndex),
+    );
+  };
+
+  const findFirstStepForErrors = (source: Record<string, string>): StepIndex => {
+    const steps = Object.keys(source)
+      .map((field) => FIELD_TO_STEP[field])
+      .filter((value): value is StepIndex => value !== undefined);
+
+    if (steps.length === 0) {
+      return 2;
+    }
+
+    return Math.min(...steps) as StepIndex;
+  };
+
+  const goToNextStep = () => {
+    const nextErrors = validateClientSide();
+    const stepErrors = getStepErrors(nextErrors, step);
+    setErrors(stepErrors);
+
+    if (Object.keys(stepErrors).length > 0) {
+      return;
+    }
+
+    setStep((current) => (Math.min(current + 1, 2) as StepIndex));
+    setServerError("");
+  };
+
+  const goToPreviousStep = () => {
+    setErrors({});
+    setServerError("");
+    setStep((current) => (Math.max(current - 1, 0) as StepIndex));
   };
 
   const uploadPhotoIfPresent = async (): Promise<string | null> => {
@@ -383,6 +422,7 @@ export function WaiverForm() {
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) {
+      setStep(findFirstStepForErrors(nextErrors));
       return;
     }
 
@@ -421,7 +461,12 @@ export function WaiverForm() {
       >(submitResponse);
 
       if (!submitResponse.ok || !submitPayload?.submissionId) {
-        setErrors(submitPayload?.errors || {});
+        const apiErrors = submitPayload?.errors || {};
+        if (Object.keys(apiErrors).length > 0) {
+          setErrors(apiErrors);
+          setStep(findFirstStepForErrors(apiErrors));
+        }
+
         throw new Error(submitPayload?.error || "Não foi possível enviar o termo.");
       }
 
@@ -448,209 +493,223 @@ export function WaiverForm() {
   return (
     <form className="waiver-form" onSubmit={submitForm} noValidate>
       <fieldset className="waiver-form-content" disabled={isSubmitting}>
-        <div className="field-grid">
-        <label>
-          Nome completo *
-          <input
-            type="text"
-            value={form.fullName}
-            onChange={(event) => setField("fullName", event.target.value)}
-            autoComplete="name"
-            required
-          />
-          {errors.fullName && <span className="error">{errors.fullName}</span>}
-        </label>
+        <div className="waiver-stepper" role="list" aria-label="Etapas do formulário">
+          {STEP_META.map((meta, index) => {
+            const stepIndex = index as StepIndex;
+            const stateClass =
+              stepIndex === step ? "is-active" : stepIndex < step ? "is-complete" : "is-pending";
 
-        <label>
-          Data de nascimento *
-          <input
-            type="date"
-            value={form.dateOfBirth}
-            onChange={(event) => setField("dateOfBirth", event.target.value)}
-            required
-          />
-          {errors.dateOfBirth && <span className="error">{errors.dateOfBirth}</span>}
-        </label>
-
-        <label>
-          E-mail *
-          <input
-            type="email"
-            value={form.email}
-            onChange={(event) => setField("email", event.target.value)}
-            autoComplete="email"
-            required
-          />
-          {errors.email && <span className="error">{errors.email}</span>}
-        </label>
-
-        <label>
-          Telefone *
-          <input
-            type="tel"
-            value={form.phone}
-            onChange={(event) => setField("phone", event.target.value)}
-            autoComplete="tel"
-            required
-          />
-          {errors.phone && <span className="error">{errors.phone}</span>}
-        </label>
-
-        <label>
-          Número do documento *
-          <input
-            type="text"
-            value={form.idNumber}
-            onChange={(event) => setField("idNumber", event.target.value)}
-            required
-          />
-          {errors.idNumber && <span className="error">{errors.idNumber}</span>}
-        </label>
-
-        <label>
-          Nome do contato de emergência *
-          <input
-            type="text"
-            value={form.emergencyContactName}
-            onChange={(event) => setField("emergencyContactName", event.target.value)}
-            required
-          />
-          {errors.emergencyContactName && <span className="error">{errors.emergencyContactName}</span>}
-        </label>
-
-        <label>
-          Telefone do contato de emergência *
-          <input
-            type="tel"
-            value={form.emergencyContactPhone}
-            onChange={(event) => setField("emergencyContactPhone", event.target.value)}
-            required
-          />
-          {errors.emergencyContactPhone && <span className="error">{errors.emergencyContactPhone}</span>}
-        </label>
-
-        <label>
-          Parentesco do contato de emergência *
-          <input
-            type="text"
-            value={form.emergencyContactRelationship}
-            onChange={(event) => setField("emergencyContactRelationship", event.target.value)}
-            required
-          />
-          {errors.emergencyContactRelationship && (
-            <span className="error">{errors.emergencyContactRelationship}</span>
-          )}
-        </label>
+            return (
+              <article key={meta.title} className={`waiver-step-card ${stateClass}`} role="listitem">
+                <span className="waiver-step-badge">{index + 1}</span>
+                <div>
+                  <h3>{meta.title}</h3>
+                  <p>{meta.hint}</p>
+                </div>
+              </article>
+            );
+          })}
         </div>
 
-        <section className="waiver-legal-block">
-        <h2>Leia o termo completo</h2>
-        <p className="hint">
-          Role até o final para habilitar a confirmação de leitura. Versão atual: {WAIVER_VERSION}.
-        </p>
-        <div className="waiver-legal-scroll" ref={waiverScrollRef} onScroll={updateWaiverReadState}>
-          {WAIVER_LINES.map((line, index) => (
-            <p key={`${index}-${line}`} className="waiver-legal-line">
-              {line || "\u00A0"}
-            </p>
-          ))}
-        </div>
+        {step === 0 ? (
+          <section className="step-panel">
+            <h2>Dados principais</h2>
+            <p className="hint">Vamos começar rápido. Só o essencial é obrigatório.</p>
 
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={form.consentWaiverText}
-            onChange={(event) => setField("consentWaiverText", event.target.checked)}
-            disabled={!canConfirmWaiver}
-          />
-          Li e concordo com o termo completo (versão {WAIVER_VERSION}). *
-        </label>
-        {!canConfirmWaiver ? (
-          <span className="hint">Leia o conteúdo até o fim para liberar esta confirmação.</span>
+            <div className="field-grid">
+              <label>
+                Nome completo *
+                <input
+                  type="text"
+                  value={form.fullName}
+                  onChange={(event) => setField("fullName", event.target.value)}
+                  autoComplete="name"
+                  required
+                />
+                {errors.fullName && <span className="error">{errors.fullName}</span>}
+              </label>
+
+              <label>
+                Data de nascimento *
+                <input
+                  type="date"
+                  value={form.dateOfBirth}
+                  onChange={(event) => setField("dateOfBirth", event.target.value)}
+                  required
+                />
+                {errors.dateOfBirth && <span className="error">{errors.dateOfBirth}</span>}
+              </label>
+
+              <label>
+                Telefone *
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={(event) => setField("phone", event.target.value)}
+                  autoComplete="tel"
+                  required
+                />
+                {errors.phone && <span className="error">{errors.phone}</span>}
+              </label>
+
+              <label>
+                E-mail (opcional)
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(event) => setField("email", event.target.value)}
+                  autoComplete="email"
+                />
+                {errors.email && <span className="error">{errors.email}</span>}
+              </label>
+
+              <label>
+                Documento (opcional)
+                <input
+                  type="text"
+                  value={form.idNumber}
+                  onChange={(event) => setField("idNumber", event.target.value)}
+                />
+                {errors.idNumber && <span className="error">{errors.idNumber}</span>}
+              </label>
+            </div>
+          </section>
         ) : null}
-        {errors.consentWaiverText && <span className="error">{errors.consentWaiverText}</span>}
-        </section>
 
-        <section className="consent-block">
-        <h2>Consentimentos</h2>
+        {step === 1 ? (
+          <section className="step-panel">
+            <h2>Contato de emergência</h2>
+            <p className="hint">
+              Para segurança operacional, só o telefone de emergência é obrigatório.
+            </p>
 
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={form.consentLiability}
-            onChange={(event) => setField("consentLiability", event.target.checked)}
-          />
-          Entendo que o wakeboard é uma atividade de risco e isento a Blind Wake Club de
-          responsabilidades padrão na medida permitida por lei. *
-        </label>
-        {errors.consentLiability && <span className="error">{errors.consentLiability}</span>}
+            <div className="field-grid">
+              <label>
+                Telefone do contato de emergência *
+                <input
+                  type="tel"
+                  value={form.emergencyContactPhone}
+                  onChange={(event) => setField("emergencyContactPhone", event.target.value)}
+                  required
+                />
+                {errors.emergencyContactPhone && <span className="error">{errors.emergencyContactPhone}</span>}
+              </label>
 
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={form.consentMedical}
-            onChange={(event) => setField("consentMedical", event.target.checked)}
-          />
-          Autorizo atendimento médico de emergência caso eu não consiga dar consentimento no momento
-          de um incidente. *
-        </label>
-        {errors.consentMedical && <span className="error">{errors.consentMedical}</span>}
+              <label>
+                Nome do contato (opcional)
+                <input
+                  type="text"
+                  value={form.emergencyContactName}
+                  onChange={(event) => setField("emergencyContactName", event.target.value)}
+                />
+                {errors.emergencyContactName && <span className="error">{errors.emergencyContactName}</span>}
+              </label>
 
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={form.consentPrivacy}
-            onChange={(event) => setField("consentPrivacy", event.target.checked)}
-          />
-          Confirmo que li o aviso de privacidade e a política de retenção descritos abaixo. *
-        </label>
-        {errors.consentPrivacy && <span className="error">{errors.consentPrivacy}</span>}
-        </section>
+              <label>
+                Relação com você (opcional)
+                <input
+                  type="text"
+                  value={form.emergencyContactRelationship}
+                  onChange={(event) => setField("emergencyContactRelationship", event.target.value)}
+                />
+                {errors.emergencyContactRelationship && (
+                  <span className="error">{errors.emergencyContactRelationship}</span>
+                )}
+              </label>
+            </div>
+          </section>
+        ) : null}
 
-        <section className="signature-block">
-        <h2>Assinatura *</h2>
-        <p className="hint">Assine dentro da caixa usando mouse, dedo ou caneta.</p>
-        <canvas
-          ref={canvasRef}
-          className="signature-canvas"
-          onPointerDown={beginDraw}
-          onPointerMove={draw}
-          onPointerUp={endDraw}
-          onPointerLeave={endDraw}
-          onPointerCancel={endDraw}
-        />
-        <div className="actions">
-          <button type="button" className="button button-secondary" onClick={clearSignature}>
-            Limpar assinatura
-          </button>
+        {step === 2 ? (
+          <>
+            <section className="waiver-legal-block step-panel">
+              <h2>Aceite legal</h2>
+              <p className="hint">Um único aceite confirma os termos obrigatórios do waiver.</p>
+
+              <details className="waiver-details">
+                <summary>Ver termo completo (versão {WAIVER_VERSION})</summary>
+                <div className="waiver-legal-scroll">
+                  {WAIVER_LINES.map((line, index) => (
+                    <p key={`${index}-${line}`} className="waiver-legal-line">
+                      {line || "\u00A0"}
+                    </p>
+                  ))}
+                </div>
+              </details>
+
+              <label className="checkbox-row checkbox-row-lg">
+                <input
+                  type="checkbox"
+                  checked={form.consentWaiverText}
+                  onChange={(event) => setUnifiedConsent(event.target.checked)}
+                />
+                Li e aceito os termos de responsabilidade, consentimento médico e privacidade. *
+              </label>
+              {errors.consentWaiverText && <span className="error">{errors.consentWaiverText}</span>}
+            </section>
+
+            <section className="signature-block step-panel">
+              <h2>Assinatura *</h2>
+              <p className="hint">Assine dentro da caixa usando mouse, dedo ou caneta.</p>
+              <canvas
+                ref={canvasRef}
+                className="signature-canvas"
+                onPointerDown={beginDraw}
+                onPointerMove={draw}
+                onPointerUp={endDraw}
+                onPointerLeave={endDraw}
+                onPointerCancel={endDraw}
+              />
+              <div className="actions">
+                <button type="button" className="button button-secondary" onClick={clearSignature}>
+                  Limpar assinatura
+                </button>
+              </div>
+              {errors.signatureDataUrl && <span className="error">{errors.signatureDataUrl}</span>}
+            </section>
+
+            <section className="photo-block step-panel">
+              <h2>Foto opcional</h2>
+              <p className="hint">Formatos aceitos: JPEG, PNG, WEBP. Tamanho máximo: 5 MB.</p>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => setPhotoFile(event.target.files?.[0] || null)}
+              />
+              <p className="hint">{photoSummary}</p>
+              {photoPreviewUrl ? (
+                <img src={photoPreviewUrl} alt="Pré-visualização da foto" className="photo-preview" />
+              ) : null}
+              {errors.photo && <span className="error">{errors.photo}</span>}
+            </section>
+
+            <section className="notice-block step-panel">
+              <h2>Aviso de privacidade</h2>
+              <p>
+                Blind Wake Club armazena os dados do termo para operação de segurança, conformidade legal
+                e resposta a incidentes, com acesso restrito à equipe autorizada.
+              </p>
+            </section>
+          </>
+        ) : null}
+
+        <div className="step-actions">
+          {step > 0 ? (
+            <button type="button" className="button button-secondary" onClick={goToPreviousStep}>
+              Voltar
+            </button>
+          ) : null}
+
+          {step < 2 ? (
+            <button type="button" className="button" onClick={goToNextStep}>
+              Continuar
+            </button>
+          ) : (
+            <button type="submit" className="button" disabled={isSubmitting}>
+              {submitButtonLabel}
+            </button>
+          )}
         </div>
-        {errors.signatureDataUrl && <span className="error">{errors.signatureDataUrl}</span>}
-        </section>
-
-        <section className="photo-block">
-        <h2>Envio de foto opcional</h2>
-        <p className="hint">Formatos aceitos: JPEG, PNG, WEBP. Tamanho máximo: 5 MB.</p>
-        <input
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onChange={(event) => setPhotoFile(event.target.files?.[0] || null)}
-        />
-        <p className="hint">{photoSummary}</p>
-        {photoPreviewUrl ? <img src={photoPreviewUrl} alt="Pré-visualização da foto" className="photo-preview" /> : null}
-        {errors.photo && <span className="error">{errors.photo}</span>}
-        </section>
-
-        <section className="notice-block">
-        <h2>Aviso de privacidade e retenção</h2>
-        <p>
-          Blind Wake Club armazena os dados do termo para operações de segurança, conformidade
-          legal e resposta a incidentes. O acesso é restrito à equipe autorizada.
-        </p>
-        <p>
-          Política de retenção: os registros são mantidos por até 3 anos a partir da data de envio,
-          salvo quando houver obrigação legal de armazenamento por prazo maior.
-        </p>
-        </section>
       </fieldset>
 
       {serverError && <p className="error server-error">{serverError}</p>}
@@ -659,10 +718,6 @@ export function WaiverForm() {
           {submitStatusMessage}
         </p>
       ) : null}
-
-      <button type="submit" className="button" disabled={isSubmitting}>
-        {submitButtonLabel}
-      </button>
     </form>
   );
 }

@@ -15,28 +15,20 @@ export function validateWaiverPayload(payload: Partial<WaiverPayload>): Validati
     errors.dateOfBirth = "Data de nascimento é obrigatória.";
   }
 
-  if (!payload.email || !EMAIL_PATTERN.test(payload.email)) {
-    errors.email = "E-mail válido é obrigatório.";
+  if (payload.email && !EMAIL_PATTERN.test(payload.email)) {
+    errors.email = "Se informado, use um e-mail válido.";
   }
 
   if (!payload.phone || !PHONE_PATTERN.test(payload.phone)) {
     errors.phone = "Telefone válido é obrigatório.";
   }
 
-  if (!payload.idNumber || !ID_PATTERN.test(payload.idNumber)) {
-    errors.idNumber = "Número de documento válido é obrigatório.";
-  }
-
-  if (!payload.emergencyContactName?.trim()) {
-    errors.emergencyContactName = "Nome do contato de emergência é obrigatório.";
+  if (payload.idNumber && !ID_PATTERN.test(payload.idNumber)) {
+    errors.idNumber = "Se informado, use um documento válido.";
   }
 
   if (!payload.emergencyContactPhone || !PHONE_PATTERN.test(payload.emergencyContactPhone)) {
-    errors.emergencyContactPhone = "Telefone do contato de emergência é obrigatório.";
-  }
-
-  if (!payload.emergencyContactRelationship?.trim()) {
-    errors.emergencyContactRelationship = "Parentesco do contato de emergência é obrigatório.";
+    errors.emergencyContactPhone = "Telefone do contato de emergência é obrigatório e deve ser válido.";
   }
 
   if (!payload.consentLiability) {
